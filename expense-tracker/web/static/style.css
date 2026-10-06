@@ -1,0 +1,19 @@
+* { box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; margin: 0; background: #f4f6f8; color: #222; }
+header { background: #2d6a4f; color: #fff; padding: 1rem 2rem; }
+header h1 { margin: 0 0 .5rem; font-size: 1.4rem; }
+nav a { color: #fff; margin-right: 1rem; text-decoration: none; }
+nav a:hover { text-decoration: underline; }
+main { max-width: 800px; margin: 2rem auto; background: #fff; padding: 1.5rem 2rem; border-radius: 8px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: .5rem; border-bottom: 1px solid #ddd; text-align: left; }
+.num { text-align: right; }
+tfoot td { font-weight: bold; }
+form label { display: block; margin-bottom: 1rem; }
+form input { display: block; width: 100%; padding: .5rem; margin-top: .25rem; }
+button { background: #2d6a4f; color: #fff; border: 0; padding: .6rem 1.2rem; border-radius: 4px; cursor: pointer; }
+.error { color: #b00020; }
+footer { text-align: center; color: #888; padding: 1rem; }
+.actions { white-space: nowrap; }
+.actions form { display: inline; margin-left: .5rem; }
+.danger { background: #b00020; padding: .3rem .7rem; }
