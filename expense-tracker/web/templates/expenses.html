@@ -1,0 +1,56 @@
+{{define "content"}}
+<h2>Мои траты</h2>
+
+<form method="GET" action="/expenses" class="filters">
+  <label>Категория
+    <select name="category">
+      <option value="">Все категории</option>
+      {{range .Categories}}
+      <option value="{{.ID}}" {{if eq .ID $.Filter.CategoryID}}selected{{end}}>{{.Name}}</option>
+      {{end}}
+    </select>
+  </label>
+  <label>С
+    <input type="date" name="from" value="{{.Filter.From}}">
+  </label>
+  <label>По
+    <input type="date" name="to" value="{{.Filter.To}}">
+  </label>
+  <button type="submit">Применить</button>
+  <a href="/expenses">Сбросить</a>
+</form>
+
+{{if .FilterError}}<p class="error">{{.FilterError}}</p>{{end}}
+
+{{if .Expenses}}
+<table>
+  <thead>
+    <tr><th>Дата</th><th>Категория</th><th>Описание</th><th class="num">Сумма, ₽</th><th></th></tr>
+  </thead>
+  <tbody>
+    {{range .Expenses}}
+    <tr>
+      <td>{{.Date.Format "02.01.2006"}}</td>
+      <td><span class="tag">{{.CategoryName}}</span></td>
+      <td>{{.Description}}</td>
+      <td class="num">{{printf "%.2f" .Amount}}</td>
+      <td class="actions">
+        <a href="/expenses/{{.ID}}/edit">Изменить</a>
+        <form method="POST" action="/expenses/{{.ID}}/delete"
+              onsubmit="return confirm('Удалить трату «{{.Description}}»?');">
+          <button type="submit" class="danger">Удалить</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+  <tfoot>
+    <tr><td colspan="3">Итого ({{len .Expenses}} шт.)</td><td class="num">{{printf "%.2f" .Total}}</td><td></td></tr>
+  </tfoot>
+</table>
+{{else if .Filtered}}
+<p>По выбранным фильтрам ничего не найдено. <a href="/expenses">Показать все траты</a></p>
+{{else}}
+<p>Трат пока нет. <a href="/expenses/new">Добавьте первую!</a></p>
+{{end}}
+{{end}}
