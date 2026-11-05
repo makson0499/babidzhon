@@ -11,9 +11,23 @@
   <header>
     <h1>💰 Учёт личных трат</h1>
     <nav>
-      <a href="/expenses">Список трат</a>
-      <a href="/expenses/new">Добавить</a>
-      <a href="/about">О проекте</a>
+      {{if .User}}
+        <a href="/expenses">Список трат</a>
+        <a href="/expenses/new">Добавить</a>
+        <a href="/about">О проекте</a>
+        <span class="nav-right">
+          <span class="user">{{.User.Email}}</span>
+          <form method="POST" action="/logout" class="inline">
+            <button type="submit" class="link">Выйти</button>
+          </form>
+        </span>
+      {{else}}
+        <a href="/about">О проекте</a>
+        <span class="nav-right">
+          <a href="/login">Вход</a>
+          <a href="/register">Регистрация</a>
+        </span>
+      {{end}}
     </nav>
   </header>
   <main>

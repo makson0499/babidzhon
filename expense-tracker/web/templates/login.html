@@ -1,0 +1,16 @@
+{{define "content"}}
+<h2>Вход</h2>
+
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+<form method="POST" action="/login" class="auth-form">
+  <label>Email
+    <input type="email" name="email" required autocomplete="email" value="{{.Email}}">
+  </label>
+  <label>Пароль
+    <input type="password" name="password" required autocomplete="current-password">
+  </label>
+  <button type="submit">Войти</button>
+</form>
+<p>Нет аккаунта? <a href="/register">Зарегистрироваться</a></p>
+{{end}}

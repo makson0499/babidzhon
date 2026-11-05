@@ -18,9 +18,9 @@ import (
 type ExpenseStore interface {
 	Create(e models.Expense) (int, error)
 	GetAll(f models.ExpenseFilter) ([]models.Expense, error)
-	GetByID(id int) (models.Expense, error)
+	GetByID(userID, id int) (models.Expense, error)
 	Update(e models.Expense) error
-	Delete(id int) error
+	Delete(userID, id int) error
 }
 
 type CategoryStore interface {
@@ -28,21 +28,36 @@ type CategoryStore interface {
 	Exists(id int) (bool, error)
 }
 
+type UserStore interface {
+	Create(email, passwordHash string) (int, error)
+	GetByEmail(email string) (models.User, error)
+}
+
+type SessionStore interface {
+	Create(userID int, ttl time.Duration) (string, time.Time, error)
+	GetUser(token string) (models.User, error)
+	Delete(token string) error
+}
+
 type Handler struct {
 	expenses   ExpenseStore
 	categories CategoryStore
+	users      UserStore
+	sessions   SessionStore
 	templates  map[string]*template.Template
 }
 
 type formData struct {
 	Amount, Description, Date string
-	CategoryID                int // int, чтобы в шаблоне сравнивать с Category.ID через eq
+	CategoryID                int
 }
 
 const dateLayout = "2006-01-02"
 
-func New(expenses ExpenseStore, categories CategoryStore, tmplDir string) (*Handler, error) {
-	pages := []string{"expenses.html", "form.html", "about.html"}
+func New(expenses ExpenseStore, categories CategoryStore, users UserStore,
+	sessions SessionStore, tmplDir string) (*Handler, error) {
+
+	pages := []string{"expenses.html", "form.html", "about.html", "login.html", "register.html"}
 	tm := make(map[string]*template.Template)
 	layout := filepath.Join(tmplDir, "layout.html")
 	for _, p := range pages {
@@ -52,14 +67,24 @@ func New(expenses ExpenseStore, categories CategoryStore, tmplDir string) (*Hand
 		}
 		tm[p] = t
 	}
-	return &Handler{expenses: expenses, categories: categories, templates: tm}, nil
+	return &Handler{
+		expenses: expenses, categories: categories,
+		users: users, sessions: sessions, templates: tm,
+	}, nil
 }
 
-func (h *Handler) render(w http.ResponseWriter, status int, page string, data map[string]any) {
+// render добавляет в данные шаблона текущего пользователя (для шапки сайта).
+func (h *Handler) render(w http.ResponseWriter, r *http.Request, status int, page string, data map[string]any) {
 	t, ok := h.templates[page]
 	if !ok {
 		http.Error(w, "шаблон не найден", http.StatusInternalServerError)
 		return
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	if u, ok := UserFromContext(r.Context()); ok {
+		data["User"] = u
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
@@ -68,14 +93,15 @@ func (h *Handler) render(w http.ResponseWriter, status int, page string, data ma
 	}
 }
 
-// renderForm рисует форму добавления/редактирования вместе со списком категорий.
-func (h *Handler) renderForm(w http.ResponseWriter, status int, title, action string, f formData, errMsg string) {
+func (h *Handler) renderForm(w http.ResponseWriter, r *http.Request, status int,
+	title, action string, f formData, errMsg string) {
+
 	cats, err := h.categories.GetAll()
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	h.render(w, status, "form.html", map[string]any{
+	h.render(w, r, status, "form.html", map[string]any{
 		"Title": title, "Action": action, "Form": f, "Error": errMsg, "Categories": cats,
 	})
 }
@@ -90,7 +116,6 @@ func parseID(r *http.Request) (int, bool) {
 	return id, err == nil && id > 0
 }
 
-// parseExpense читает и проверяет поля формы, включая существование категории.
 func (h *Handler) parseExpense(r *http.Request) (models.Expense, formData, error) {
 	catID, _ := strconv.Atoi(r.FormValue("category_id"))
 	f := formData{
@@ -120,14 +145,18 @@ func (h *Handler) parseExpense(r *http.Request) (models.Expense, formData, error
 	if !ok {
 		return models.Expense{}, f, errors.New("Такой категории не существует.")
 	}
-	return models.Expense{Amount: amount, Description: f.Description, Date: date, CategoryID: catID}, f, nil
+	return models.Expense{
+		UserID:      currentUserID(r),
+		Amount:      amount,
+		Description: f.Description,
+		Date:        date,
+		CategoryID:  catID,
+	}, f, nil
 }
 
-// parseFilter читает query-параметры ?category=&from=&to=.
-// Пустые и некорректные значения игнорируются, а пользователь получает предупреждение.
 func parseFilter(r *http.Request) (models.ExpenseFilter, string) {
 	q := r.URL.Query()
-	var f models.ExpenseFilter
+	f := models.ExpenseFilter{UserID: currentUserID(r)}
 	var problems []string
 
 	if s := q.Get("category"); s != "" {
@@ -168,7 +197,6 @@ func (h *Handler) Home(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/expenses", http.StatusFound)
 }
 
-// GET /expenses?category=2&from=2025-01-01&to=2025-01-31
 func (h *Handler) ListExpenses(w http.ResponseWriter, r *http.Request) {
 	filter, filterErr := parseFilter(r)
 
@@ -187,26 +215,26 @@ func (h *Handler) ListExpenses(w http.ResponseWriter, r *http.Request) {
 	for _, e := range list {
 		total += e.Amount
 	}
-	h.render(w, http.StatusOK, "expenses.html", map[string]any{
+	h.render(w, r, http.StatusOK, "expenses.html", map[string]any{
 		"Title":       "Список трат",
 		"Expenses":    list,
 		"Total":       total,
 		"Categories":  cats,
 		"Filter":      filter,
-		"Filtered":    filter != (models.ExpenseFilter{}),
+		"Filtered":    filter.HasFilters(),
 		"FilterError": filterErr,
 	})
 }
 
 func (h *Handler) NewExpenseForm(w http.ResponseWriter, r *http.Request) {
-	h.renderForm(w, http.StatusOK, "Новая трата", "/expenses",
+	h.renderForm(w, r, http.StatusOK, "Новая трата", "/expenses",
 		formData{Date: time.Now().Format(dateLayout)}, "")
 }
 
 func (h *Handler) CreateExpense(w http.ResponseWriter, r *http.Request) {
 	e, f, err := h.parseExpense(r)
 	if err != nil {
-		h.renderForm(w, http.StatusBadRequest, "Новая трата", "/expenses", f, err.Error())
+		h.renderForm(w, r, http.StatusBadRequest, "Новая трата", "/expenses", f, err.Error())
 		return
 	}
 	if _, err := h.expenses.Create(e); err != nil {
@@ -222,15 +250,15 @@ func (h *Handler) EditExpenseForm(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	e, err := h.expenses.GetByID(id)
+	e, err := h.expenses.GetByID(currentUserID(r), id)
 	if errors.Is(err, storage.ErrNotFound) {
-		http.NotFound(w, r)
+		http.NotFound(w, r) // чужая трата выглядит как несуществующая
 		return
 	} else if err != nil {
 		serverError(w, err)
 		return
 	}
-	h.renderForm(w, http.StatusOK, "Редактирование траты", fmt.Sprintf("/expenses/%d/edit", id),
+	h.renderForm(w, r, http.StatusOK, "Редактирование траты", fmt.Sprintf("/expenses/%d/edit", id),
 		formData{
 			Amount:      strconv.FormatFloat(e.Amount, 'f', 2, 64),
 			Description: e.Description,
@@ -248,7 +276,7 @@ func (h *Handler) UpdateExpense(w http.ResponseWriter, r *http.Request) {
 	action := fmt.Sprintf("/expenses/%d/edit", id)
 	e, f, err := h.parseExpense(r)
 	if err != nil {
-		h.renderForm(w, http.StatusBadRequest, "Редактирование траты", action, f, err.Error())
+		h.renderForm(w, r, http.StatusBadRequest, "Редактирование траты", action, f, err.Error())
 		return
 	}
 	e.ID = id
@@ -268,7 +296,7 @@ func (h *Handler) DeleteExpense(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err := h.expenses.Delete(id); errors.Is(err, storage.ErrNotFound) {
+	if err := h.expenses.Delete(currentUserID(r), id); errors.Is(err, storage.ErrNotFound) {
 		http.NotFound(w, r)
 		return
 	} else if err != nil {
@@ -279,7 +307,7 @@ func (h *Handler) DeleteExpense(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) About(w http.ResponseWriter, r *http.Request) {
-	h.render(w, http.StatusOK, "about.html", map[string]any{"Title": "О проекте"})
+	h.render(w, r, http.StatusOK, "about.html", map[string]any{"Title": "О проекте"})
 }
 
 func (h *Handler) Ping(w http.ResponseWriter, r *http.Request) {

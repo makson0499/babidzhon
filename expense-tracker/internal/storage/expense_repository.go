@@ -21,19 +21,20 @@ func NewExpenseRepository(db *sql.DB) *ExpenseRepository {
 	return &ExpenseRepository{db: db}
 }
 
-// Общая часть SELECT: трата + название категории одним запросом (JOIN).
-// LEFT JOIN — чтобы трата без категории тоже попала в результат.
 const selectExpenses = `
-	SELECT e.id, e.amount, e.description, e.date,
+	SELECT e.id, e.user_id, e.amount, e.description, e.date,
 	       COALESCE(e.category_id, 0),
 	       COALESCE(c.name, 'Без категории')
 	FROM expenses e
 	LEFT JOIN categories c ON c.id = e.category_id`
 
 func (r *ExpenseRepository) Create(e models.Expense) (int, error) {
+	if e.UserID <= 0 {
+		return 0, errors.New("не указан владелец траты")
+	}
 	res, err := r.db.Exec(
-		`INSERT INTO expenses (amount, description, date, category_id) VALUES (?, ?, ?, ?)`,
-		e.Amount, e.Description, e.Date.Format(dateLayout), e.CategoryID,
+		`INSERT INTO expenses (user_id, amount, description, date, category_id) VALUES (?, ?, ?, ?, ?)`,
+		e.UserID, e.Amount, e.Description, e.Date.Format(dateLayout), e.CategoryID,
 	)
 	if err != nil {
 		return 0, err
@@ -42,10 +43,14 @@ func (r *ExpenseRepository) Create(e models.Expense) (int, error) {
 	return int(id), err
 }
 
-// GetAll возвращает траты с учётом фильтра. Пустой фильтр = все траты.
 func (r *ExpenseRepository) GetAll(f models.ExpenseFilter) ([]models.Expense, error) {
-	var conds []string // фрагменты WHERE — только константные строки из кода
-	var args []any     // значения — только через placeholder ?
+	if f.UserID <= 0 {
+		return nil, errors.New("не указан пользователь")
+	}
+
+	// условие по пользователю есть всегда
+	conds := []string{"e.user_id = ?"}
+	args := []any{f.UserID}
 
 	if f.CategoryID > 0 {
 		conds = append(conds, "e.category_id = ?")
@@ -60,11 +65,8 @@ func (r *ExpenseRepository) GetAll(f models.ExpenseFilter) ([]models.Expense, er
 		args = append(args, f.To)
 	}
 
-	query := selectExpenses
-	if len(conds) > 0 {
-		query += " WHERE " + strings.Join(conds, " AND ")
-	}
-	query += " ORDER BY e.date DESC, e.id DESC"
+	query := selectExpenses + " WHERE " + strings.Join(conds, " AND ") +
+		" ORDER BY e.date DESC, e.id DESC"
 
 	rows, err := r.db.Query(query, args...)
 	if err != nil {
@@ -83,8 +85,9 @@ func (r *ExpenseRepository) GetAll(f models.ExpenseFilter) ([]models.Expense, er
 	return list, rows.Err()
 }
 
-func (r *ExpenseRepository) GetByID(id int) (models.Expense, error) {
-	row := r.db.QueryRow(selectExpenses+" WHERE e.id = ?", id)
+// GetByID находит трату только среди трат указанного пользователя.
+func (r *ExpenseRepository) GetByID(userID, id int) (models.Expense, error) {
+	row := r.db.QueryRow(selectExpenses+" WHERE e.id = ? AND e.user_id = ?", id, userID)
 	e, err := scanExpense(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.Expense{}, ErrNotFound
@@ -94,8 +97,9 @@ func (r *ExpenseRepository) GetByID(id int) (models.Expense, error) {
 
 func (r *ExpenseRepository) Update(e models.Expense) error {
 	res, err := r.db.Exec(
-		`UPDATE expenses SET amount = ?, description = ?, date = ?, category_id = ? WHERE id = ?`,
-		e.Amount, e.Description, e.Date.Format(dateLayout), e.CategoryID, e.ID,
+		`UPDATE expenses SET amount = ?, description = ?, date = ?, category_id = ?
+		 WHERE id = ? AND user_id = ?`,
+		e.Amount, e.Description, e.Date.Format(dateLayout), e.CategoryID, e.ID, e.UserID,
 	)
 	if err != nil {
 		return err
@@ -103,8 +107,8 @@ func (r *ExpenseRepository) Update(e models.Expense) error {
 	return checkAffected(res)
 }
 
-func (r *ExpenseRepository) Delete(id int) error {
-	res, err := r.db.Exec(`DELETE FROM expenses WHERE id = ?`, id)
+func (r *ExpenseRepository) Delete(userID, id int) error {
+	res, err := r.db.Exec(`DELETE FROM expenses WHERE id = ? AND user_id = ?`, id, userID)
 	if err != nil {
 		return err
 	}
@@ -118,7 +122,8 @@ type scanner interface {
 func scanExpense(s scanner) (models.Expense, error) {
 	var e models.Expense
 	var date string
-	if err := s.Scan(&e.ID, &e.Amount, &e.Description, &date, &e.CategoryID, &e.CategoryName); err != nil {
+	if err := s.Scan(&e.ID, &e.UserID, &e.Amount, &e.Description, &date,
+		&e.CategoryID, &e.CategoryName); err != nil {
 		return e, err
 	}
 	t, err := time.Parse(dateLayout, date)

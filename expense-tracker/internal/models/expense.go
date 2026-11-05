@@ -9,16 +9,23 @@ type Category struct {
 
 type Expense struct {
 	ID           int
+	UserID       int
 	Amount       float64
 	Description  string
 	Date         time.Time
 	CategoryID   int
-	CategoryName string // заполняется через JOIN, в таблице expenses его нет
+	CategoryName string
 }
 
-// ExpenseFilter — необязательные фильтры списка. Нулевое значение = «фильтр не задан».
+// ExpenseFilter: UserID обязателен, остальные поля — необязательные фильтры.
 type ExpenseFilter struct {
-	CategoryID int    // 0 — все категории
-	From       string // "YYYY-MM-DD" или ""
-	To         string // "YYYY-MM-DD" или ""
+	UserID     int
+	CategoryID int
+	From       string
+	To         string
+}
+
+// HasFilters сообщает, выбрал ли пользователь хоть один фильтр (UserID не считается).
+func (f ExpenseFilter) HasFilters() bool {
+	return f.CategoryID > 0 || f.From != "" || f.To != ""
 }

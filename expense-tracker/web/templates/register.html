@@ -1,0 +1,19 @@
+{{define "content"}}
+<h2>Регистрация</h2>
+
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+<form method="POST" action="/register" class="auth-form">
+  <label>Email
+    <input type="email" name="email" required autocomplete="email" value="{{.Email}}">
+  </label>
+  <label>Пароль (не менее 8 символов)
+    <input type="password" name="password" required minlength="8" maxlength="72" autocomplete="new-password">
+  </label>
+  <label>Повторите пароль
+    <input type="password" name="password_confirm" required minlength="8" maxlength="72" autocomplete="new-password">
+  </label>
+  <button type="submit">Зарегистрироваться</button>
+</form>
+<p>Уже есть аккаунт? <a href="/login">Войти</a></p>
+{{end}}
